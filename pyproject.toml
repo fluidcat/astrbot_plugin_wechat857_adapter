@@ -1,0 +1,15 @@
+[project]
+name = "astrbot-plugin-wechat857-adapter"
+version = "1.0.0"
+description = "wechat857 adapter for AstrBot"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "defusedxml>=0.7.1",
+    "pymediainfo~=7.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "astrbot>=4.5.1",
+]
