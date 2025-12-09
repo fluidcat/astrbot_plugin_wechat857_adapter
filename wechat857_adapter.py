@@ -1,4 +1,5 @@
 import datetime
+import inspect
 import os.path
 import shutil
 import time
@@ -103,15 +104,16 @@ WX857_LOGO = os.path.realpath(os.path.join(get_astrbot_plugin_path(), "astrbot_p
 class WeChat857Adapter(Platform):
     """Wechat857 Adapter"""
 
-    def __init__(
-            self, platform_config: dict, platform_settings: dict, event_queue: asyncio.Queue
-    ) -> None:
-        super().__init__(platform_config, event_queue)
+    def __init__(self, config: dict, settings: dict, event_queue: asyncio.Queue):
+        kwargs = {"config": config, "event_queue": event_queue, "settings": settings}
+        super_params = list(inspect.signature(Platform.__init__).parameters.keys())[1:]
+        super_kwargs = {k: v for k, v in kwargs.items() if k in super_params}
+        super().__init__(**super_kwargs)
+
         self._shutdown_event = None
-        self.config = platform_config
-        self.settings = platform_settings
+        self.settings = settings
         self.bot_id = self.config.get("id")
-        self.unique_session = platform_settings.get("unique_session", False)
+        self.unique_session = settings.get("unique_session", False)
         self.logo_path = WX857_LOGO
 
         self.metadata = PlatformMetadata(
