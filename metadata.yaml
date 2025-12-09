@@ -1,5 +1,6 @@
 name: astrbot_plugin_wechat857_adapter
+display_name: wechat857 插件
 author: fluidcat
-description: wechat857_adapter
+description: wechat857 接入插件，在机器人中可添加wechat857机器人使用
 version: 1.0.0
 repo: https://github.com/fluidcat/astrbot_plugin_wechat857_adapter
