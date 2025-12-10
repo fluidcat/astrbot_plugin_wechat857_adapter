@@ -858,7 +858,7 @@ class WeChat857Adapter(Platform):
             match quote_type:
                 case 1:  # 文本引用
                     quoted_text = self.cached_texts.get(str(svrid), quote_content)
-                    components.append(Plain(f"[引用] {nickname}: {quoted_text}"))
+                    components.append(Plain(f"[引用消息({nickname}: {quoted_text})]"))
 
                 case 3:  # 图片引用
                     quoted_image_b64 = self.cached_images.get(str(svrid))
