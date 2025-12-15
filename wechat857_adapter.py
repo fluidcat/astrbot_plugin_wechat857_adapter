@@ -287,22 +287,25 @@ class WeChat857Adapter(Platform):
         logger.info(f"{self.bot_id} 开始等待webhook消息")
         session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10),
                                         connector=aiohttp.TCPConnector(limit=100))
-        while True:
-            try:
-                await asyncio.wait_for(self.webhook_queue.get(), 5*60)
-                self.webhook_queue.task_done()
-            except asyncio.TimeoutError:
-                pass  # 预期异常不用处理
+        try:
+            while True:
+                try:
+                    await asyncio.wait_for(self.webhook_queue.get(), 5*60)
+                    self.webhook_queue.task_done()
+                except asyncio.TimeoutError:
+                    pass  # 预期异常不用处理
 
-            try:
-                data = await self.client.sync_message(session)
-            except Exception as ex:
-                logger.warning(f"获取新消息失败 {ex}")
-                continue
+                try:
+                    data = await self.client.sync_message(session)
+                except Exception as ex:
+                    logger.warning(f"获取新消息失败 {ex}")
+                    continue
 
-            msgs = data.get("AddMsgs", [])
-            for message in msgs:
-                asyncio.create_task(self.handle_message(message))
+                msgs = data.get("AddMsgs", [])
+                for message in msgs:
+                    asyncio.create_task(self.handle_message(message))
+        finally:
+            await session.close()
 
     def load_credentials(self):
         if not self.wxid:
