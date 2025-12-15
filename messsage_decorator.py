@@ -1,6 +1,7 @@
-from asyncio.log import logger
+
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from astrbot.core import logger
 from astrbot.core.message.components import BaseMessageComponent
 
 

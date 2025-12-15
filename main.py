@@ -1,15 +1,16 @@
 import importlib
 import sys
 
-from astrbot.api import logger
-from astrbot.api.star import Context, Star
+from astrbot import logger
+from astrbot.api.star import Context, Star, register
 from astrbot.core import AstrBotConfig
-from astrbot.core.platform import AstrMessageEvent
 from astrbot.core.star.filter.custom_filter import CustomFilter
-from pymediainfo import MediaInfo  # 触发astrbot安装requirements.txt
+from pymediainfo import MediaInfo  # noqa: F401 触发astrbot安装requirements.txt
+from astrbot.api.event import filter, AstrMessageEvent
 
 WeChat857Adapter = None
 WeChat857Event = None
+PLUGIN_ADAPTER_NAME = "wechat857"
 
 
 class WeChat857AdapterFilter(CustomFilter):
@@ -17,43 +18,58 @@ class WeChat857AdapterFilter(CustomFilter):
         super().__init__(raise_error)
 
     def filter(self, event: AstrMessageEvent, cfg: AstrBotConfig) -> bool:
-        return event.get_platform_name() == 'wechat857'
+        return event.get_platform_name() == PLUGIN_ADAPTER_NAME
 
 
+@register(
+    "astrbot_plugin_wechat857_adapter",
+    "fluidcat",
+    "wechat857 接入插件，在机器人中可添加wechat857机器人使用",
+    "1.0.0")
 class Wechat857AdapterPlugin(Star):
 
     def __init__(self, context: Context):
         super().__init__(context)
         self.context = context
 
+    @filter.command("wx857_qrcode")
+    async def list_wechat_login_qrcode(self, event: AstrMessageEvent):
+        insts = self.get_wechat857_insts()
+        urls = []
+        for inst in insts:
+            if (qrcode := getattr(inst, "login_qrcode_url")) and qrcode.startswith("http"):
+                urls.append(f"#### 「{inst.meta().id}」实例登录二维码")
+                urls.append(f"![{inst.meta().id}]({qrcode})")
+        yield event.plain_result("\n".join(urls or ["没有需要登录的wx857实例"]))
+
     async def initialize(self):
         # 强制预清理：在导入适配器前，无条件删除既有 http_endpoint 注册，确保干净状态
         try:
-            adapter_name = "wechat857"
             import astrbot.core.platform.register as _core_reg
             _map = getattr(_core_reg, "platform_cls_map", None)
             _list = getattr(_core_reg, "platform_registry", None)
-            if _map is not None and (adapter_name in _map):
-                del _map[adapter_name]
+            if _map is not None and (PLUGIN_ADAPTER_NAME in _map):
+                del _map[PLUGIN_ADAPTER_NAME]
             for i in reversed(range(len(_list))):
-                if _list[i].name == adapter_name:
+                if _list[i].name == PLUGIN_ADAPTER_NAME:
                     del _list[i]
-            logger.debug("强制预清理：已移除 wechat857 既有注册。")
+            logger.debug(f"强制预清理：已移除 {PLUGIN_ADAPTER_NAME} 既有注册。")
         except Exception:
             pass
 
         try:
             load_wechat857_modules()
         except ImportError as e:
-            logger.error(f"导入 Wechat 857 Adapter 失败，请检查依赖是否安装: {e}")
+            logger.error(f"导入 {PLUGIN_ADAPTER_NAME} Adapter 失败，请检查依赖是否安装: {e}")
             raise
+
+    def get_wechat857_insts(self):
+        return [p for p in self.context.platform_manager.get_insts() if p.meta().name == PLUGIN_ADAPTER_NAME]
 
     async def terminate(self):
         # 停用wechat857
-        for p in self.context.platform_manager.get_insts():
-            pm = p.meta()
-            if pm.name == 'wechat857':
-                await self.context.platform_manager.terminate_platform(pm.id)
+        for p in self.get_wechat857_insts():
+            await self.context.platform_manager.terminate_platform(p.meta().id)
 
 
 def load_wechat857_modules(hot_reload: bool = True):
@@ -70,7 +86,7 @@ def load_wechat857_modules(hot_reload: bool = True):
         # 1. 处理 http_endpoint_adapter 模块
         if hot_reload and adapter_module_name in sys.modules:
             del sys.modules[adapter_module_name]
-            logger.info("清除 wechat857_adapter 缓存，触发热加载")
+            logger.info(f"清除 {PLUGIN_ADAPTER_NAME} adapter 缓存，触发热加载")
 
         # 动态导入模块（支持相对路径）
         adapter_module = importlib.import_module(adapter_module_name, package=__name__)
@@ -82,15 +98,15 @@ def load_wechat857_modules(hot_reload: bool = True):
         # 2. 处理 http_endpoint_event 模块
         if hot_reload and event_module_name in sys.modules:
             del sys.modules[event_module_name]
-            logger.info("清除 wechat857_event 缓存，触发热加载")
+            logger.info(f"清除 {PLUGIN_ADAPTER_NAME}_event 缓存，触发热加载")
 
         event_module = importlib.import_module(event_module_name, package=__name__)
         WeChat857Event = event_module.WeChat857Event
 
-        logger.info("WeChat857 模块加载成功（热加载：%s）", hot_reload)
+        logger.info(f"{PLUGIN_ADAPTER_NAME} 模块加载成功（热加载：%s）", hot_reload)
 
     except ImportError as e:
-        logger.error(f"导入 WeChat857 Adapter 失败，请检查依赖是否安装: {e}")
+        logger.error(f"导入 {PLUGIN_ADAPTER_NAME} Adapter 失败，请检查依赖是否安装: {e}")
         # 重置全局变量，避免状态不一致
         WeChat857Adapter = None
         WeChat857Event = None

@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import inspect
 import os.path
@@ -9,7 +10,7 @@ from xml.etree import ElementTree
 import aiohttp
 import anyio
 
-from astrbot.api import logger
+from astrbot import logger
 from astrbot.api.platform import (
     AstrBotMessage,
     MessageMember,
@@ -97,6 +98,8 @@ WX857_LOGO = os.path.realpath(os.path.join(get_astrbot_plugin_path(), "astrbot_p
         "wx857_host": "",
         "wx857_port": "8059",
         "wx857_wxid": "",
+        "unified_webhook_mode": True,
+        "webhook_uuid": "",
     },
     adapter_display_name="wechat-857",
     logo_path=WX857_LOGO
@@ -136,7 +139,8 @@ class WeChat857Adapter(Platform):
         self.device_name = None  # 用于保存设备名
         self.first_login_time = None  # 用于保存设备首次登录时间
         self.ws_handle_task = None
-        self.polling_handle_task = None
+        self.query_message_handle_task = None
+        self.login_qrcode_url = ""
 
         # 添加图片消息缓存，用于引用消息处理
         self.cached_images = {}
@@ -149,6 +153,8 @@ class WeChat857Adapter(Platform):
         """缓存文本消息。key是NewMsgId (对应引用消息的svrid)，value是消息文本内容"""
         # 设置文本缓存大小限制
         self.max_text_cache = 100
+        self.webhook_mode = self.config.get("unified_webhook_mode", False)
+        self.webhook_queue = asyncio.Queue()
 
     async def run(self) -> None:
         """
@@ -184,6 +190,7 @@ class WeChat857Adapter(Platform):
 
                 if qr_code_url:
                     # await self.set_url_as_logo(qr_code_url)
+                    self.login_qrcode_url = qr_code_url
                     logger.info(f"请扫描以下二维码登录: {qr_code_url}")
                 else:
                     logger.error("无法获取登录二维码。")
@@ -193,6 +200,7 @@ class WeChat857Adapter(Platform):
                 login_successful = await self.check_login_status(uuid)
 
                 if login_successful:
+                    self.login_qrcode_url = ""
                     logger.info(f"登录成功, {self.bot_id}适配器已连接。")
                 else:
                     logger.info(f"登录失败或超时, {self.bot_id} 适配器将关闭。")
@@ -202,7 +210,10 @@ class WeChat857Adapter(Platform):
         self.save_credentials()  # 登录成功后保存凭据
         await self.client_prepare()
 
-        self.polling_handle_task = asyncio.create_task(self.start_polling())
+        if self.webhook_mode:
+            self.query_message_handle_task = asyncio.create_task(self.star_webhook())
+        else:
+            self.query_message_handle_task = asyncio.create_task(self.start_polling())
 
         await self._shutdown_event.wait()
 
@@ -271,6 +282,27 @@ class WeChat857Adapter(Platform):
                     for message in data:
                         asyncio.create_task(self.handle_message(message))
                 await asyncio.sleep(1)
+
+    async def star_webhook(self):
+        logger.info(f"{self.bot_id} 开始等待webhook消息")
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10),
+                                        connector=aiohttp.TCPConnector(limit=100))
+        while True:
+            try:
+                await asyncio.wait_for(self.webhook_queue.get(), 5*60)
+                self.webhook_queue.task_done()
+            except asyncio.TimeoutError:
+                pass  # 预期异常不用处理
+
+            try:
+                data = await self.client.sync_message(session)
+            except Exception as ex:
+                logger.warning(f"获取新消息失败 {ex}")
+                continue
+
+            msgs = data.get("AddMsgs", [])
+            for message in msgs:
+                asyncio.create_task(self.handle_message(message))
 
     def load_credentials(self):
         if not self.wxid:
@@ -354,6 +386,7 @@ class WeChat857Adapter(Platform):
             logger.error(f"保存 {self.bot_id} 凭据失败: {e}")
         # 保存wxid到消息平台配置
         self.config["wx857_wxid"] = self.wxid
+        self.config["webhook_uuid"] = self.wxid
         global_config.save_config()
 
     async def check_login_status(self, uuid: str):
@@ -952,14 +985,14 @@ class WeChat857Adapter(Platform):
         try:
             if self.ws_handle_task:
                 self.ws_handle_task.cancel()
-            if self.polling_handle_task:
-                self.polling_handle_task.cancel()
+            if self.query_message_handle_task:
+                self.query_message_handle_task.cancel()
             self._shutdown_event.set()
             self.config.update({"enable": False})
             astrbot_config.save_config()
         except Exception as er:
             pass
-        logger.info("终止 WeChat857 适配器。")
+        logger.info(f"终止 {self.bot_id} 适配器。")
 
     def meta(self) -> PlatformMetadata:
         """
@@ -993,3 +1026,9 @@ class WeChat857Adapter(Platform):
         )
         # 调用实例方法 send
         await sending_event.send(message_chain)
+
+    async def webhook_callback(self, request: Any) -> Any:
+        msg: dict = await request.json
+        await self.webhook_queue.put(msg)
+        return {"status": "OK"}
+
