@@ -1008,6 +1008,7 @@ class WeChat857Adapter(Platform):
     ):
         dummy_message_obj = AstrBotMessage()
         dummy_message_obj.session_id = session.session_id
+        dummy_message_obj.message = message_chain.chain
         # 根据 session_id 判断消息类型
         if "@chatroom" in session.session_id:
             dummy_message_obj.type = MessageType.GROUP_MESSAGE
