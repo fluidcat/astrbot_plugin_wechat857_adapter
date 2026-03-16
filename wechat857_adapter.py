@@ -22,6 +22,7 @@ from astrbot.api.platform import (
 from astrbot.core import astrbot_config as global_config
 from astrbot.core.message.components import *
 from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.pipeline.waking_check.stage import UNIQUE_SESSION_ID_BUILDERS
 from astrbot.core.platform.message_session import MessageSesion
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path, get_astrbot_plugin_path
 from .client import Wechat857Client
@@ -36,47 +37,9 @@ except ImportError as e:
     )
 
 
-def _inject_astrbot_field_metadata():
+def _astrbot_inject():
     try:
-        from astrbot.core.config.default import CONFIG_METADATA_2
-
-        pg = CONFIG_METADATA_2.get("platform_group")
-        if not isinstance(pg, dict):
-            return
-        metadata = pg.get("metadata")
-        if not isinstance(metadata, dict):
-            return
-        platform = metadata.get("platform")
-        if not isinstance(platform, dict):
-            return
-        items = platform.get("items")
-        if not isinstance(items, dict):
-            return
-
-        adapter_config = {
-            "wx857_host": {
-                "description": "wechat-857 服务地址（IP、域名等）",
-                "type": "string",
-                "hint": "必填项。wechat-857的基地址。",
-                "obvious_hint": True,
-            },
-            "wx857_port": {
-                "description": "wechat-857 服务端口",
-                "type": "string",
-                "hint": "wechat-857 服务端口（默认8059）",
-            },
-            "wx857_wxid": {
-                "description": "当前消息适配器登录wechat账号的wxid",
-                "type": "string",
-                "hint": "填写已在wechat-857服务登录的wxid，未登录不用填",
-            }
-        }
-
-        # 仅在缺失时新增；若已存在则尽量补齐缺失的字段
-        for k, v in adapter_config.items():
-            items[k] = v
-
-        logger.debug("已为 wechat857 适配器注入字段元数据")
+        UNIQUE_SESSION_ID_BUILDERS['wechat857'] = lambda obj: f"{obj.get_session_id()}#{obj.get_sender_id()}"
     except Exception as expt:
         try:
             logger.debug(f"注入 wechat857 字段元数据失败: {expt}")
@@ -100,6 +63,30 @@ WX857_LOGO = os.path.realpath(os.path.join(get_astrbot_plugin_path(), "astrbot_p
         "wx857_wxid": "",
         "unified_webhook_mode": True,
         "webhook_uuid": "",
+        "wx857_mute_bot": False
+    },
+    config_metadata={
+        "wx857_host": {
+            "description": "wechat-857 服务地址（IP、域名等）",
+            "type": "string",
+            "hint": "必填项。wechat-857的基地址。",
+            "obvious_hint": True,
+        },
+        "wx857_port": {
+            "description": "wechat-857 服务端口",
+            "type": "string",
+            "hint": "wechat-857 服务端口（默认8059）",
+        },
+        "wx857_wxid": {
+            "description": "当前消息适配器登录wechat账号的wxid",
+            "type": "string",
+            "hint": "填写已在wechat-857服务登录的wxid，未登录不用填",
+        },
+        "wx857_mute_bot": {
+            "description": "禁言开关",
+            "type": "bool",
+            "hint": "禁言当前机器人，停止回复消息",
+        }
     },
     adapter_display_name="wechat-857",
     logo_path=WX857_LOGO
@@ -116,7 +103,6 @@ class WeChat857Adapter(Platform):
         self._shutdown_event = None
         self.settings = settings
         self.bot_id = self.config.get("id")
-        self.unique_session = settings.get("unique_session", False)
         self.logo_path = WX857_LOGO
 
         self.metadata = PlatformMetadata(
@@ -155,6 +141,10 @@ class WeChat857Adapter(Platform):
         self.max_text_cache = 100
         self.webhook_mode = self.config.get("unified_webhook_mode", False)
         self.webhook_queue = asyncio.Queue()
+
+    @property
+    def mute_bot(self):
+        return self.config.get("wx857_mute_bot", False)
 
     async def run(self) -> None:
         """
@@ -468,6 +458,7 @@ class WeChat857Adapter(Platform):
 
         abm.message_str = ""
         abm.message = []
+        abm.session_id = from_user_name
 
         # 如果是机器人自己发送的消息、回显消息或系统消息，忽略
         if from_user_name == self.wxid:
@@ -518,11 +509,6 @@ class WeChat857Adapter(Platform):
                 if accurate_nickname:
                     abm.sender.nickname = accurate_nickname
 
-            # 对于群聊，session_id 可以是群聊 ID 或发送者 ID + 群聊 ID (如果 unique_session 为 True)
-            if self.unique_session:
-                abm.session_id = f"{from_user_name}#{abm.sender.user_id}"
-            else:
-                abm.session_id = from_user_name
         else:
             abm.type = MessageType.FRIEND_MESSAGE
             abm.group_id = ""
@@ -530,7 +516,6 @@ class WeChat857Adapter(Platform):
             if push_content and " : " in push_content:
                 nick_name = push_content.split(" : ")[0]
             abm.sender = MessageMember(user_id=from_user_name, nickname=nick_name)
-            abm.session_id = from_user_name
         return True
 
     async def _get_group_member_nickname(

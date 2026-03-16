@@ -44,6 +44,9 @@ class WeChat857Event(AstrMessageEvent):
         return super()._outline_chain(iterable_chain)
 
     async def send(self, message: MessageChain):
+        if self.adapter.mute_bot:
+            logger.warning(f"platform[{self.adapter.meta().id}]已开启禁言，停止回复任何消息")
+            return
         self.session_id = self.session_id.removesuffix("_wxid")
         if (
                 any(isinstance(m, At) for m in message.chain)
@@ -69,14 +72,11 @@ class WeChat857Event(AstrMessageEvent):
                     await self._send_file(comp)
                 elif isinstance(comp, Music):
                     await self._send_music(comp)
-        await super().send(message)
+        self._has_send_oper = True
 
     async def _send_image(self, comp: Image):
         file_path = await comp.convert_to_file_path()
-        if self.get_group_id() and "#" in self.session_id:
-            session_id = self.session_id.split("#")[0]
-        else:
-            session_id = self.session_id
+        session_id = self.get_group_id() or self.get_sender_id() or self.session_id
 
         if hasattr(comp, "cdn_xml"):
             await self.adapter.client.send_cdn_img_msg(session_id, comp.cdn_xml)
@@ -84,11 +84,7 @@ class WeChat857Event(AstrMessageEvent):
             await self.adapter.client.send_image_message(session_id, Path(file_path))
 
     async def _send_at_text(self, message: MessageChain):
-
-        if self.get_group_id() and "#" in self.session_id:
-            session_id = self.session_id.split("#")[0]
-        else:
-            session_id = self.session_id
+        session_id = self.get_group_id() or self.get_sender_id() or self.session_id
 
         ats = []
         at_text = ""
@@ -107,34 +103,22 @@ class WeChat857Event(AstrMessageEvent):
         ats = comp.name or comp.qq
         at_text = f"@{ats}\u2005"
 
-        if self.get_group_id() and "#" in self.session_id:
-            session_id = self.session_id.split("#")[0]
-        else:
-            session_id = self.session_id
+        session_id = self.get_group_id() or self.get_sender_id() or self.session_id
         await self.adapter.client.send_text_message(session_id, at_text, [ats])
 
     async def _send_text(self, comp: Plain):
         message_text = comp.text
 
-        if self.get_group_id() and "#" in self.session_id:
-            session_id = self.session_id.split("#")[0]
-        else:
-            session_id = self.session_id
+        session_id = self.get_group_id() or self.get_sender_id() or self.session_id
 
         await self.adapter.client.send_text_message(session_id, message_text)
 
     async def _send_emoji(self, comp: WechatEmoji):
-        if self.get_group_id() and "#" in self.session_id:
-            session_id = self.session_id.split("#")[0]
-        else:
-            session_id = self.session_id
+        session_id = self.get_group_id() or self.get_sender_id() or self.session_id
         await self.adapter.client.send_emoji_message(session_id, comp.md5, comp.md5_len)
 
     async def _send_voice(self, comp: Record):
-        if self.get_group_id() and "#" in self.session_id:
-            session_id = self.session_id.split("#")[0]
-        else:
-            session_id = self.session_id
+        session_id = self.get_group_id() or self.get_sender_id() or self.session_id
 
         if hasattr(comp, "cdn_xml"):
             await self.adapter.client.send_cdn_file_msg(session_id, comp.cdn_xml)
@@ -144,10 +128,7 @@ class WeChat857Event(AstrMessageEvent):
             await self.adapter.client.send_voice_message(session_id, Path(record_path), ext)
 
     async def _send_video(self, comp: Video):
-        if self.get_group_id() and "#" in self.session_id:
-            session_id = self.session_id.split("#")[0]
-        else:
-            session_id = self.session_id
+        session_id = self.get_group_id() or self.get_sender_id() or self.session_id
 
         if hasattr(comp, "cdn_xml"):
             await self.adapter.client.send_cdn_video_msg(session_id, comp.cdn_xml)
@@ -157,10 +138,7 @@ class WeChat857Event(AstrMessageEvent):
             await self.adapter.client.send_voice_message(session_id, Path(record_path), ext)
 
     async def _send_file(self, comp: File):
-        if self.get_group_id() and "#" in self.session_id:
-            session_id = self.session_id.split("#")[0]
-        else:
-            session_id = self.session_id
+        session_id = self.get_group_id() or self.get_sender_id() or self.session_id
 
         if hasattr(comp, "cdn_xml"):
             await self.adapter.client.send_cdn_file_msg(session_id, comp.cdn_xml)
@@ -175,10 +153,7 @@ class WeChat857Event(AstrMessageEvent):
     #     await self.adapter.client.send_app_message(session_id, comp.data, comp.resid)
 
     async def _send_music(self, comp: Music):
-        if self.get_group_id() and "#" in self.session_id:
-            session_id = self.session_id.split("#")[0]
-        else:
-            session_id = self.session_id
+        session_id = self.get_group_id() or self.get_sender_id() or self.session_id
         await self.adapter.client.send_app_message(session_id, comp.content, 3)
 
     @staticmethod

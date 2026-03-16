@@ -91,7 +91,7 @@ def load_wechat857_modules(hot_reload: bool = True):
         # 动态导入模块（支持相对路径）
         adapter_module = importlib.import_module(adapter_module_name, package=__name__)
         # 执行初始化函数
-        adapter_module._inject_astrbot_field_metadata()
+        adapter_module._astrbot_inject()
         # 赋值给全局变量
         WeChat857Adapter = adapter_module.WeChat857Adapter
 
