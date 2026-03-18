@@ -1,3 +1,4 @@
+import datetime
 import importlib
 import sys
 
@@ -62,6 +63,19 @@ class Wechat857AdapterPlugin(Star):
         except ImportError as e:
             logger.error(f"导入 {PLUGIN_ADAPTER_NAME} Adapter 失败，请检查依赖是否安装: {e}")
             raise
+
+        self.context.cron_manager.scheduler.add_job(
+            self.load_platform,
+            next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=5)
+        )
+
+    async def load_platform(self):
+        running_ids = [inst.meta().id for inst in self.context.platform_manager.get_insts()]
+        for config in self.context.platform_manager.platforms_config:
+            platform_id = config.get("id")
+            platform_type = config.get("type")
+            if platform_id not in running_ids and platform_type == PLUGIN_ADAPTER_NAME:
+                await self.context.platform_manager.load_platform(config)
 
     def get_wechat857_insts(self):
         return [p for p in self.context.platform_manager.get_insts() if p.meta().name == PLUGIN_ADAPTER_NAME]

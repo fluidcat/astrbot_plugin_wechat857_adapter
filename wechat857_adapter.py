@@ -267,10 +267,9 @@ class WeChat857Adapter(Platform):
                     await asyncio.sleep(5)
                     continue
 
-                data = data.get("AddMsgs")
-                if data:
-                    for message in data:
-                        asyncio.create_task(self.handle_message(message))
+                msgs = data.get("AddMsgs") or []
+                for message in msgs:
+                    asyncio.create_task(self.handle_message(message)).add_done_callback(self._consume_task)
                 await asyncio.sleep(1)
 
     async def star_webhook(self):
@@ -284,18 +283,30 @@ class WeChat857Adapter(Platform):
                     self.webhook_queue.task_done()
                 except asyncio.TimeoutError:
                     pass  # 预期异常不用处理
-
+                except Exception as whe:
+                    logger.info(f"webhook 等待出现异常, 终止等待.{whe}")
                 try:
                     data = await self.client.sync_message(session)
                 except Exception as ex:
                     logger.warning(f"获取新消息失败 {ex}")
                     continue
 
-                msgs = data.get("AddMsgs", [])
+                msgs = data.get("AddMsgs") or []
                 for message in msgs:
-                    asyncio.create_task(self.handle_message(message))
+                    asyncio.create_task(self.handle_message(message)).add_done_callback(self._consume_task)
+        except Exception as ex1:
+            logger.info(f"{self.bot_id} 的webhook task 异常结束.{ex1}")
         finally:
+            logger.info(f"{self.bot_id} 的webhook task 已经结束")
             await session.close()
+
+    @staticmethod
+    def _consume_task(task):
+        """全局复用的回调函数"""
+        try:
+            task.result()
+        except Exception:
+            pass
 
     def load_credentials(self):
         if not self.wxid:
@@ -808,7 +819,19 @@ class WeChat857Adapter(Platform):
     @WechatMsg.do(msg_type="49", content_type="1")
     async def convert_url_share_message(self, abm: AstrBotMessage, raw_message: dict, content: str):
         # 链接、图文分享
-        logger.warning("链接、图文分享消息暂不支持")
+        _xml = self._format_to_xml(content, (abm.type != MessageType.GROUP_MESSAGE))
+
+        title = _xml.findtext("appmsg/title")
+        url = _xml.findtext("appmsg/url")
+        share = Share(title=title, url=url)
+
+        if "gh_" in abm.sender.user_id:
+            abm.sender.nickname = _xml.findtext("appmsg/mmreader/publisher/nickname")
+            share.title = f"微信公众号「{abm.sender.nickname}」推文：{share.title}"
+            share.image = _xml.findtext("appmsg/mmreader/category/item/summary")
+            share.content = _xml.findtext("appmsg/mmreader/category/item/cover")
+        return share
+
 
     @WechatMsg.do(msg_type="49", content_type="6")
     async def convert_file_share_message(self, abm: AstrBotMessage, raw_message: dict, content: str):
@@ -847,7 +870,93 @@ class WeChat857Adapter(Platform):
     @WechatMsg.do(msg_type="49", content_type="19")
     async def convert_chat_record_share_message(self, abm: AstrBotMessage, raw_message: dict, content: str):
         # 聊天记录分享
-        logger.warning("聊天记录分享消息暂不支持")
+        _xml = self._format_to_xml(content, (abm.type != MessageType.GROUP_MESSAGE))
+        records = eT.fromstring(_xml.findtext("appmsg/recorditem"))
+        try:
+            records = self.parse_text_chat_record(records)
+            return Plain(text="\n".join(records))
+        except Exception as ex:
+            logger.error(f"parse_text_chat_record异常{ex}", exc_info=True)
+
+    def parse_text_chat_record(self, record_info, nested:int = 0):
+        title = record_info.findtext("title")
+        record_list = record_info.findall("datalist/dataitem")
+        records = []
+        for item in record_list:
+            record = []
+            # 1-文本 2-图片 3-语音 4-视频 5-图文分享 6-位置分享 17-聊天记录 22-视频号视频分享
+            data_type = str(item.get("datatype"))
+            chat_new_msg_id = item.findtext("fromnewmsgid")
+            datasourceid = str(item.get("datasourceid"))
+            chat_from_user_id = datasourceid.replace(chat_new_msg_id, "").strip("#")
+            chat_desc = item.findtext('datadesc')
+            chat_user = item.findtext('sourcename')
+            chat_user_avatar_url = item.findtext('sourceheadurl')
+            chat_time = item.findtext('sourcetime')
+
+            chat_from = f"{chat_from_user_id}({chat_user})" if chat_from_user_id else f"{chat_user}"
+            record.append(f"{chat_time} {chat_from}: ")
+            match data_type:
+                case '1':
+                    record.append(chat_desc)
+                case '2':
+                    cdnthumburl = item.findtext("cdnthumburl")
+                    cdnthumbkey = item.findtext("cdnthumbkey")
+                    thumbsize = item.findtext("thumbsize")
+                    thumbfullmd5 = item.findtext("thumbfullmd5")
+                    thumbhead256md5 = item.findtext("thumbhead256md5")
+
+                    cdndataurl = item.findtext("cdndataurl")
+                    cdndatakey = item.findtext("cdndatakey")
+                    datasize = item.findtext("datasize")
+                    fullmd5 = item.findtext("fullmd5")
+                    head256md5 = item.findtext("head256md5")
+
+                    record.append(f"[图片]")
+                case '3':
+                    duration = item.findtext("duration")
+                    record.append(f"语音: {duration}ms")
+                case '4':
+                    cdnthumburl = item.findtext("cdnthumburl")
+                    cdnthumbkey = item.findtext("cdnthumbkey")
+                    thumbsize = item.findtext("thumbsize")
+                    thumbfullmd5 = item.findtext("thumbfullmd5")
+                    thumbhead256md5 = item.findtext("thumbhead256md5")
+
+                    cdndataurl = item.findtext("cdndataurl")
+                    cdndatakey = item.findtext("cdndatakey")
+                    datasize = item.findtext("datasize")
+                    fullmd5 = item.findtext("fullmd5")
+                    head256md5 = item.findtext("head256md5")
+                    datafmt = item.findtext("datafmt")
+                    duration = item.findtext("duration")
+
+                    record.append(f"{datafmt}视频: {duration}s")
+                case '5':
+                    cdnthumburl = item.findtext("cdnthumburl")
+                    cdnthumbkey = item.findtext("cdnthumbkey")
+                    thumbsize = item.findtext("thumbsize")
+                    thumbfullmd5 = item.findtext("thumbfullmd5")
+                    thumbhead256md5 = item.findtext("thumbhead256md5")
+
+                    datatitle = item.findtext("datatitle")
+                    link = item.findtext("link")
+                    record.append(f"[图文]：{datatitle}")
+                case '6':
+                    address = item.findtext('locitem/label')
+                    lat = item.findtext('locitem/lat')
+                    lng = item.findtext('locitem/lng')
+                    poiname = item.findtext('locitem/poiname') or address
+
+                    record.append(f"[定位地址]：经纬度({lng},{lat})-{poiname}({address})")
+                case '17':
+                    nested_record = item.find("recordxml/recordinfo")
+                    record.append('\n'.join(self.parse_text_chat_record(nested_record, nested+1)))
+                case _:
+                    continue
+            records.append(''.join(record))
+        tab_ch = "  "
+        return [f"[{title}]:"] + [tab_ch*nested+"<record>"] + [f"{tab_ch*(nested+1)}{r}" for r in records] + [tab_ch*nested+"</record>"]
 
     @WechatMsg.do(msg_type="49", content_type="33")
     async def convert_micro_program_share_message(self, abm: AstrBotMessage, raw_message: dict, content: str):
@@ -947,7 +1056,7 @@ class WeChat857Adapter(Platform):
 
     @WechatMsg.do(msg_type="49", content_type="2001")
     async def convert_red_packet_message(self, abm: AstrBotMessage, raw_message: dict, content: str):
-        # 红包消息
+        # 红包消息 {'MsgId': 262692830, 'FromUserName': {'string': 'wxid_kujj7objp83122'}, 'ToUserName': {'string': 'wxid_j44mhyp73ubp21'}, 'MsgType': 49, 'Content': {'string': '<msg>\n\t<appmsg appid="" sdkver="">\n\t\t<des><![CDATA[我给你发了一个红包，赶紧去拆!]]></des>\n\t\t<url><![CDATA[https://wxapp.tenpay.com/mmpayhb/wxhb_personalreceive?showwxpaytitle=1&msgtype=1&channelid=1&sendid=1000039801202603186213559618758&ver=6&sign=d3724539a5788591aa797db65dfd1d8018280dbef91ac8b39c21862b3db2cccc73893aaac686e1107d74a90cb77f6c082cd92589d17acb1bd5ac5b7f90a2089dfea1efdddde985bb8b49e23334f80f94]]></url>\n\t\t<lowurl><![CDATA[]]></lowurl>\n\t\t<type><![CDATA[2001]]></type>\n\t\t<title><![CDATA[微信红包]]></title>\n\t\t<thumburl><![CDATA[https://wx.gtimg.com/hongbao/1800/hb.png]]></thumburl>\n\t\t<wcpayinfo>\n\t\t\t<templateid><![CDATA[7a2a165d31da7fce6dd77e05c300028a]]></templateid>\n\t\t\t<url><![CDATA[https://wxapp.tenpay.com/mmpayhb/wxhb_personalreceive?showwxpaytitle=1&msgtype=1&channelid=1&sendid=1000039801202603186213559618758&ver=6&sign=d3724539a5788591aa797db65dfd1d8018280dbef91ac8b39c21862b3db2cccc73893aaac686e1107d74a90cb77f6c082cd92589d17acb1bd5ac5b7f90a2089dfea1efdddde985bb8b49e23334f80f94]]></url>\n\t\t\t<iconurl><![CDATA[https://wx.gtimg.com/hongbao/1800/hb.png]]></iconurl>\n\t\t\t<receivertitle><![CDATA[恭喜发财，大吉大利]]></receivertitle>\n\t\t\t<sendertitle><![CDATA[恭喜发财，大吉大利]]></sendertitle>\n\t\t\t<scenetext><![CDATA[微信红包]]></scenetext>\n\t\t\t<senderdes><![CDATA[查看红包]]></senderdes>\n\t\t\t<receiverdes><![CDATA[领取红包]]></receiverdes>\n\t\t\t<nativeurl><![CDATA[wxpay://c2cbizmessagehandler/hongbao/receivehongbao?msgtype=1&channelid=1&sendid=1000039801202603186213559618758&sendusername=wxid_kujj7objp83122&ver=6&sign=d3724539a5788591aa797db65dfd1d8018280dbef91ac8b39c21862b3db2cccc73893aaac686e1107d74a90cb77f6c082cd92589d17acb1bd5ac5b7f90a2089dfea1efdddde985bb8b49e23334f80f94&total_num=1]]></nativeurl>\n\t\t\t<sceneid><![CDATA[1002]]></sceneid>\n\t\t\t<innertype><![CDATA[0]]></innertype>\n\t\t\t<paymsgid><![CDATA[1000039801202603186213559618758]]></paymsgid>\n\t\t\t<scenetext>微信红包</scenetext>\n\t\t\t<locallogoicon><![CDATA[c2c_hongbao_icon_cn]]></locallogoicon>\n\t\t\t<invalidtime><![CDATA[1773910018]]></invalidtime>\n\t\t\t<broaden />\n\t\t</wcpayinfo>\n\t</appmsg>\n\t<fromusername><![CDATA[wxid_kujj7objp83122]]></fromusername>\n</msg>\n'}, 'Status': 3, 'ImgStatus': 1, 'ImgBuf': {'iLen': 0}, 'CreateTime': 1773823619, 'MsgSource': '<msgsource>\n\t<pushkey />\n\t<ModifyMsgAction />\n\t<signature>N0_V1_fjdTOwNA|v1_xBTEh0UO</signature>\n\t<tmp_node>\n\t\t<publisher-id></publisher-id>\n\t</tmp_node>\n</msgsource>\n', 'PushContent': '副号3 : [红包]恭喜发财，大吉大利', 'NewMsgId': 8319649155516787830, 'MsgSeq': 825167915}
         logger.warning("红包消息暂不支持")
 
     @WechatMsg.do(msg_type="10002", content_type="ilinkvoip")
@@ -976,8 +1085,8 @@ class WeChat857Adapter(Platform):
             if self.query_message_handle_task:
                 self.query_message_handle_task.cancel()
             self._shutdown_event.set()
-            self.config.update({"enable": False})
-            astrbot_config.save_config()
+            # self.config.update({"enable": False})
+            # astrbot_config.save_config()
         except Exception as er:
             pass
         logger.info(f"终止 {self.bot_id} 适配器。")
