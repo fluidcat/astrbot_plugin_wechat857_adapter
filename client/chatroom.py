@@ -76,7 +76,8 @@ class ChatroomMixin(WechatAPIClientBase):
             json_resp = await response.json()
 
             if json_resp.get("Success"):
-                return json_resp.get("Data").get("ContactList")[0]
+                contact_list = json_resp.get("Data").get("ContactList")
+                return contact_list[0] if contact_list else []
             else:
                 self.error_handler(json_resp)
 

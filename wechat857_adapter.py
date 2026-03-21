@@ -9,6 +9,7 @@ from xml.etree import ElementTree
 
 import aiohttp
 import anyio
+from cachetools import TTLCache
 
 from astrbot import logger
 from astrbot.api.platform import (
@@ -141,6 +142,8 @@ class WeChat857Adapter(Platform):
         self.max_text_cache = 100
         self.webhook_mode = self.config.get("unified_webhook_mode", False)
         self.webhook_queue = asyncio.Queue()
+        self.group_member_cache = TTLCache(ttl=1800, maxsize=1024)
+        self.group_member_lock = asyncio.Lock()
 
     @property
     def mute_bot(self):
@@ -507,6 +510,7 @@ class WeChat857Adapter(Platform):
         if "@chatroom" in from_user_name:
             abm.type = MessageType.GROUP_MESSAGE
             abm.group_id = from_user_name
+            abm.group.group_name = await self._get_group_nickname(group_id=abm.group_id)
 
             parts = content.split(":\n", 1)
             sender_wxid = parts[0] if len(parts) == 2 else ""
@@ -534,7 +538,15 @@ class WeChat857Adapter(Platform):
     ) -> Optional[str]:
 
         try:
-            member_list = await self.client.get_chatroom_member_list(group_id)
+            member_info = self.group_member_cache.get(group_id)
+            if not member_info:
+                async with self.group_member_lock:
+                    member_info = self.group_member_cache.get(group_id)
+                    if not member_info:
+                        member_info = await self.client.get_chatroom_info(group_id)
+                        self.group_member_cache[group_id] = member_info
+
+            member_list = member_info.get("NewChatroomData",{}).get("ChatRoomMember",[])
             if member_list:
                 for member in member_list:
                     if member.get("UserName") == member_wxid:
@@ -545,6 +557,26 @@ class WeChat857Adapter(Platform):
             else:
                 logger.error("获取群成员详情失败")
             return None
+        except aiohttp.ClientConnectorError as e:
+            logger.error(f"连接到 {self.bot_id} 服务失败: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"获取群成员详情时发生错误: {e}")
+            return None
+
+    async def _get_group_nickname(self, group_id: str) -> Optional[str]:
+        if not group_id:
+            return ""
+        try:
+            member_info = self.group_member_cache.get(group_id)
+            if not member_info:
+                async with self.group_member_lock:
+                    member_info = self.group_member_cache.get(group_id)
+                    if not member_info:
+                        member_info = await self.client.get_chatroom_info(group_id)
+                        self.group_member_cache[group_id] = member_info
+
+            return  member_info.get("NickName",{}).get("string", "")
         except aiohttp.ClientConnectorError as e:
             logger.error(f"连接到 {self.bot_id} 服务失败: {e}")
             return None
@@ -825,11 +857,29 @@ class WeChat857Adapter(Platform):
         url = _xml.findtext("appmsg/url")
         share = Share(title=title, url=url)
 
+        # 公众号推文
         if "gh_" in abm.sender.user_id:
             abm.sender.nickname = _xml.findtext("appmsg/mmreader/publisher/nickname")
             share.title = f"微信公众号「{abm.sender.nickname}」推文：{share.title}"
-            share.image = _xml.findtext("appmsg/mmreader/category/item/summary")
-            share.content = _xml.findtext("appmsg/mmreader/category/item/cover")
+            share.image = _xml.findtext("appmsg/mmreader/category/item/cover")
+            share.content = _xml.findtext("appmsg/mmreader/category/item/summary")
+        # 用户分享公众号图文
+        elif "gh_" in _xml.findtext("appmsg/sourceusername", ""):
+            gh_name = _xml.findtext("appmsg/sourcedisplayname")
+            gh_name = f"(微信公众号「{gh_name}」)" if gh_name else ""
+            share.title = f"[链接]{gh_name}{share.title}"
+            share.content = _xml.findtext("appmsg/des")
+        # 用户分享外部app链接
+        elif (_xml.find("appmsg") or {}).get("appid"):
+            appname = _xml.findtext("appinfo/appname")
+            appname = f"(应用「{appname}」)" if appname else ""
+            share.title = f"[链接]{appname}{share.title}"
+            share.content = _xml.findtext("appmsg/des")
+        else:
+            share.content = _xml.findtext("appmsg/des")
+            share.content = "" if share.title.strip() == share.content.strip() else share.content
+            share.title = f"[链接]{share.title}"
+
         return share
 
 
@@ -959,6 +1009,7 @@ class WeChat857Adapter(Platform):
         return [f"[{title}]:"] + [tab_ch*nested+"<record>"] + [f"{tab_ch*(nested+1)}{r}" for r in records] + [tab_ch*nested+"</record>"]
 
     @WechatMsg.do(msg_type="49", content_type="33")
+    @WechatMsg.do(msg_type="49", content_type="36")
     async def convert_micro_program_share_message(self, abm: AstrBotMessage, raw_message: dict, content: str):
         # 小程序分享
         logger.warning("小程序分享消息暂不支持")
