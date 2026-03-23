@@ -198,6 +198,8 @@ class WeChat857Adapter(Platform):
                 else:
                     logger.info(f"登录失败或超时, {self.bot_id} 适配器将关闭。")
                     await self.terminate()
+                    self.config.update({"enable": False})
+                    astrbot_config.save_config()
                     return
 
         self.save_credentials()  # 登录成功后保存凭据

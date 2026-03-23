@@ -33,15 +33,22 @@ class Wechat857AdapterPlugin(Star):
         super().__init__(context)
         self.context = context
 
-    @filter.command("wx857_qrcode")
+    @filter.command("wx857_qrcode", alias={"微信登录"})
     async def list_wechat_login_qrcode(self, event: AstrMessageEvent):
         insts = self.get_wechat857_insts()
-        urls = []
+        has_qrcode = False
+        markdown_platform = ["telegram", "lark", "dingtalk", "discord", "misskey", "slack", "line"]
+        curr_platform = event.get_platform_name().lower()
         for inst in insts:
             if (qrcode := getattr(inst, "login_qrcode_url")) and qrcode.startswith("http"):
-                urls.append(f"#### 「{inst.meta().id}」实例登录二维码")
-                urls.append(f"![{inst.meta().id}]({qrcode})")
-        yield event.plain_result("\n".join(urls or ["没有需要登录的wx857实例"]))
+                has_qrcode = True
+                if curr_platform in markdown_platform:
+                    yield event.plain_result(f"#### 「{inst.meta().id}」实例登录二维码\n![{inst.meta().id}]({qrcode})")
+                else:
+                    yield event.plain_result(f"「{inst.meta().id}」实例登录二维码:")
+                    yield event.image_result(qrcode)
+        if not has_qrcode:
+            yield event.plain_result("没有需要登录的微信")
 
     async def initialize(self):
         # 强制预清理：在导入适配器前，无条件删除既有 http_endpoint 注册，确保干净状态
