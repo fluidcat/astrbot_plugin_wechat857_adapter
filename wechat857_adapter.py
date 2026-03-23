@@ -127,7 +127,8 @@ class WeChat857Adapter(Platform):
         self.first_login_time = None  # 用于保存设备首次登录时间
         self.ws_handle_task = None
         self.query_message_handle_task = None
-        self.login_qrcode_url = ""
+        self.login_qrcode_url = None
+        self.login_qrcode_ttl = None
 
         # 添加图片消息缓存，用于引用消息处理
         self.cached_images = {}
@@ -148,6 +149,12 @@ class WeChat857Adapter(Platform):
     @property
     def mute_bot(self):
         return self.config.get("wx857_mute_bot", False)
+
+    def get_stats(self) -> dict:
+        stats = super().get_stats()
+        if self.login_qrcode_url:
+            stats["wechat857"] = {"qrcode": self.login_qrcode_url,"qr_status":f"请扫码登录,{self.login_qrcode_ttl}秒后失效"}
+        return stats
 
     async def run(self) -> None:
         """
@@ -408,10 +415,15 @@ class WeChat857Adapter(Platform):
                 if stat:
                     self.wxid = data.get("acctSectResp").get("userName")
                     self.nickname = data.get("acctSectResp").get("nickName")
+                    self.login_qrcode_ttl = None
+                    self.login_qrcode_url = None
                     logger.info(
                         f"登录成功, wxid: {self.wxid}, uuid: {uuid}"
                     )
                     return True
+                else:
+                    self.login_qrcode_ttl = data
+
 
                 logger.info(f"等待登录中，过期倒计时：{data}s")
                 await asyncio.sleep(5)
