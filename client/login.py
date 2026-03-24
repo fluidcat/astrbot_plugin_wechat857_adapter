@@ -53,7 +53,7 @@ class LoginMixin(WechatAPIClientBase):
                 qrcode_data = f'http://weixin.qq.com/x/{json_resp.get("Data").get("Uuid")}'
                 url = f"https://api.pwmqr.com/qrcode/create/?url={qrcode_data}"
 
-                return json_resp.get("Data").get("Uuid"), url
+                return json_resp.get("Data").get("Uuid"), url, qrcode_data
             else:
                 self.error_handler(json_resp)
 

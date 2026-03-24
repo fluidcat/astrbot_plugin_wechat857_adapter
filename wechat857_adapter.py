@@ -186,11 +186,11 @@ class WeChat857Adapter(Platform):
             # 2. 获取登录二维码
             if not is_login_in:
                 logger.info(f"{self.bot_id} 设备离线状态，开始扫码登录。")
-                uuid, qr_code_url = await self.client.get_qr_code(self.device_name, self.device_id)
+                uuid, qr_code_url, qr_data = await self.client.get_qr_code(self.device_name, self.device_id)
 
                 if qr_code_url:
                     # await self.set_url_as_logo(qr_code_url)
-                    self.login_qrcode_url = qr_code_url
+                    self.login_qrcode_url = qr_data
                     logger.info(f"请扫描以下二维码登录: {qr_code_url}")
                 else:
                     logger.error("无法获取登录二维码。")
