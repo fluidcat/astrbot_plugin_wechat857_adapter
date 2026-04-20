@@ -817,18 +817,19 @@ class WeChat857Adapter(Platform):
         """
         处理 msg_type == 47 的表情消息(emoji)
         """
-        try:
-            emoji_element = self._format_to_xml(content, (abm.type != MessageType.GROUP_MESSAGE)).find(".//emoji")
-            if emoji_element is not None:
-                return WechatEmoji(
-                    md5=emoji_element.get("md5"),
-                    md5_len=emoji_element.get("len"),
-                    cdnurl=emoji_element.get("cdnurl"),
-                )
-        except Exception as e:
-            logger.error(f"[parse_emoji] 解析失败: {e}")
+        # try:
+        #     emoji_element = self._format_to_xml(content, (abm.type != MessageType.GROUP_MESSAGE)).find(".//emoji")
+        #     if emoji_element is not None:
+        #         return WechatEmoji(
+        #             md5=emoji_element.get("md5"),
+        #             md5_len=emoji_element.get("len"),
+        #             cdnurl=emoji_element.get("cdnurl"),
+        #         )
+        # except Exception as e:
+        #     logger.error(f"[parse_emoji] 解析失败: {e}")
 
-        return None
+        # return None
+        logger.warning("表情包消息暂不支持")
 
     @WechatMsg.do(msg_type="48")
     async def convert_location_message(self, abm: AstrBotMessage, raw_message: dict, content: str):

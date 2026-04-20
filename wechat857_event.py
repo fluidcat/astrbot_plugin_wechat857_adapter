@@ -62,8 +62,8 @@ class WeChat857Event(AstrMessageEvent):
                     await self._send_at(comp)
                 elif isinstance(comp, Image):
                     await self._send_image(comp)
-                elif isinstance(comp, WechatEmoji):
-                    await self._send_emoji(comp)
+                # elif isinstance(comp, WechatEmoji):
+                #     await self._send_emoji(comp)
                 elif isinstance(comp, Record):
                     await self._send_voice(comp)
                 elif isinstance(comp, Video):
@@ -113,9 +113,9 @@ class WeChat857Event(AstrMessageEvent):
 
         await self.adapter.client.send_text_message(session_id, message_text)
 
-    async def _send_emoji(self, comp: WechatEmoji):
-        session_id = self.get_group_id() or self.get_sender_id() or self.session_id
-        await self.adapter.client.send_emoji_message(session_id, comp.md5, comp.md5_len)
+    # async def _send_emoji(self, comp: WechatEmoji):
+    #     session_id = self.get_group_id() or self.get_sender_id() or self.session_id
+    #     await self.adapter.client.send_emoji_message(session_id, comp.md5, comp.md5_len)
 
     async def _send_voice(self, comp: Record):
         session_id = self.get_group_id() or self.get_sender_id() or self.session_id
