@@ -135,7 +135,7 @@ class WeChat857Event(AstrMessageEvent):
         else:
             record_path = await comp.convert_to_file_path()
             ext = os.path.splitext(record_path)[1].lower()[1:]
-            await self.adapter.client.send_voice_message(session_id, Path(record_path), ext)
+            await self.adapter.client.send_video_message(session_id, Path(record_path), ext)
 
     async def _send_file(self, comp: File):
         session_id = self.get_group_id() or self.get_sender_id() or self.session_id

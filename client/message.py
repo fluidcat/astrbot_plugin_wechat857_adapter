@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import Union
 
 import aiohttp
+import pysilk
 from aiohttp import ClientSession
+from pydub import AudioSegment
+
 from astrbot import logger
 from astrbot.core.utils.io import file_to_base64
-from astrbot.core.utils.tencent_record_helper import audio_to_tencent_silk_base64
 from pymediainfo import MediaInfo
 
 from .base import *
@@ -290,13 +292,12 @@ class MessageMixin(WechatAPIClientBase):
             raise BanProtection("风控保护: 新设备登录后4小时内请挂机")
         elif format not in ["amr", "wav", "mp3", "silk"]:
             raise ValueError("format must be one of amr, wav, mp3, silk")
-        
+
         if format == "silk":
             b64, duration = file_to_base64(voice.resolve()), 1
             b64 = b64.removeprefix("base64://")
         else:
-            b64, duration = await audio_to_tencent_silk_base64(voice.resolve())
-        duration = duration*1000
+            b64, duration = await self.audio_bytes_to_tencent_silk_b64(voice, format)
 
         # AMR = 0, MP3 = 2, SILK = 4, SPEEX = 1, WAVE = 3
         # format_dict = {"amr": 0, "speex": 1, "mp3": 2, "wave": 3, "wav": 3, "silk": 4}
@@ -315,6 +316,63 @@ class MessageMixin(WechatAPIClientBase):
                 return int(data.get("ClientMsgId")), data.get("CreateTime"), data.get("NewMsgId")
             else:
                 self.error_handler(json_resp)
+
+    async def audio_bytes_to_tencent_silk_b64(self, file: Union[str, bytes, os.PathLike], src_format: str) -> tuple[str, int]:
+        """
+        音频资源转为腾讯兼容Silk Base64，全程内存无磁盘临时文件
+        :param file: 音频资源，支持三种类型
+            1. str / os.PathLike：本地绝对文件路径
+            2. bytes：音频原始二进制字节
+        :param src_format: 音频原始格式，如 mp3 / amr / wav / m4a / flac / opus
+        :return: 带0x02腾讯头部的Silk base64字符串
+        """
+        # 统一读取为内存二进制
+        if isinstance(file, (str, os.PathLike)):
+            # 路径类型：读取文件到内存
+            with open(file, "rb") as f:
+                audio_bytes = f.read()
+        elif isinstance(file, bytes):
+            # 字节类型：直接使用
+            audio_bytes = file
+        else:
+            raise TypeError("file 参数仅支持 字符串路径 / os.PathLike / bytes")
+
+        # BytesIO内存加载解码音频
+        stream = BytesIO(audio_bytes)
+        audio = AudioSegment.from_file(stream, format=src_format.lower())
+
+        # 标准化腾讯语音参数：单声道、16bit、24kHz
+        audio = audio.set_channels(1)
+        audio = audio.set_sample_width(2)
+        audio = audio.set_frame_rate(24000)
+        duration_ms = round(audio.duration_seconds * 1000)
+
+        raw_pcm = audio.raw_data
+        sample_rate = audio.frame_rate
+
+        # 构造pysilk需要的IO输入输出流
+        pcm_input = BytesIO(raw_pcm)
+        silk_output = BytesIO()
+
+        # 线程池执行同步encode，不阻塞异步事件循环
+        await asyncio.to_thread(
+            pysilk.encode,
+            input=pcm_input,
+            output=silk_output,
+            sample_rate=sample_rate,
+            bit_rate=24000,
+            max_internal_sample_rate=24000,
+            packet_loss_percentage=0,
+            complexity=2,
+            use_inband_fec=False,
+            use_dtx=False,
+            tencent=True
+        )
+
+        # 读取编码后的Silk二进制并转为base64
+        silk_output.seek(0)
+        silk_bin = silk_output.read()
+        return base64.b64encode(silk_bin).decode("utf-8"), duration_ms
 
     @staticmethod
     def _get_closest_frame_rate(frame_rate: int) -> int:
