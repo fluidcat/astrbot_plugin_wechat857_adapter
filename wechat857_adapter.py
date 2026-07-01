@@ -1192,7 +1192,7 @@ class WeChat857Adapter(Platform):
         await sending_event.send(message_chain)
 
     async def webhook_callback(self, request: Any) -> Any:
-        msg: dict = await request.json
-        await self.webhook_queue.put(msg)
+        # msg: dict = await request.json
+        await self.webhook_queue.put({})
         return {"status": "OK"}
 
